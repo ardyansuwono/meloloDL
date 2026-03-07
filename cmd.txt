@@ -1,0 +1,13 @@
+sudo apt update
+sudo apt install software-properties-common -y
+sudo add-apt-repository universe
+sudo apt update
+sudo apt install ffmpeg -y
+
+pip install requests tqdm
+
+rm -rf output/*
+
+rclone move "output/Si Genius Juru Taksir/Si Genius Juru Taksir.mp4" gdrive:/WidevineDownloads/ -P
+
+rclone move output gdrive:/WidevineDownloads/ -P
