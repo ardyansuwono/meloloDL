@@ -8,7 +8,7 @@ from tqdm import tqdm
 BASE = "https://api.sonzaix.indevs.in"
 
 OUTPUT_DIR = "output"
-THREADS = 10
+THREADS = 8
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -17,9 +17,9 @@ def clean_title(title):
     return re.sub(r'[\\/*?:"<>|]', "", title)
 
 
-############################################################
-# MEL0L0
-############################################################
+###########################################################
+# MELOLO
+###########################################################
 
 def search_melolo(query):
 
@@ -30,6 +30,7 @@ def search_melolo(query):
 
     for item in res["data"]:
         for book in item["books"]:
+
             dramas.append({
                 "title": book["drama_name"],
                 "id": book["drama_id"],
@@ -79,14 +80,13 @@ def download_melolo(ep, drama_folder):
             f.write(chunk)
 
 
-############################################################
-# REELSHORT
-############################################################
+###########################################################
+# DRAMABOX
+###########################################################
 
-def search_reelshort(query):
+def search_dramabox(query):
 
-    url = f"{BASE}/reelshort/search?query={query}&page=1"
-
+    url = f"{BASE}/dramabox/search?q={query}&result=10&page=1"
     res = requests.get(url).json()
 
     dramas = []
@@ -103,58 +103,67 @@ def search_reelshort(query):
     return dramas
 
 
-def reelshort_episode_list(book_id):
+def dramabox_episode_list(drama_id):
 
-    url = f"{BASE}/reelshort/detail?bookId={book_id}"
-
+    url = f"{BASE}/dramabox/detail/{drama_id}"
     res = requests.get(url).json()
 
-    return res["data"]["video_list"]
+    return res["data"]["chapterList"]
 
 
-def reelshort_stream(book_id, chapter_id):
+def dramabox_stream(drama_id, episode_index):
 
-    url = f"{BASE}/reelshort/stream?bookId={book_id}&chapterId={chapter_id}"
+    url = f"{BASE}/dramabox/stream?dramaId={drama_id}&episodeIndex={episode_index}"
 
-    res = requests.get(url).json()
+    for _ in range(5):
 
-    videos = res["data"]["videoList"]
+        try:
 
-    best = max(videos, key=lambda x: float(x["bitrate"]) if x["bitrate"] != "0" else 0)
+            res = requests.get(url, timeout=10).json()
 
-    return best["playUrl"]
+            if "data" not in res:
+                continue
+
+            qualities = res["data"]["qualities"]
+
+            best = max(qualities, key=lambda x: x["quality"])
+
+            return best["videoPath"]
+
+        except:
+            pass
+
+    return None
 
 
-def download_reelshort(ep, book_id, drama_folder):
+def download_dramabox(ep, drama_id, drama_folder):
 
-    ep_num = ep["serialNumber"]
-    chapter_id = ep["chapterId"]
+    ep_index = ep["chapterIndex"] + 1
 
-    filename = os.path.join(drama_folder, f"ep{ep_num:03}.mp4")
+    filename = os.path.join(drama_folder, f"ep{ep_index:03}.mp4")
 
     if os.path.exists(filename):
         return
 
-    m3u8 = reelshort_stream(book_id, chapter_id)
+    video_url = dramabox_stream(drama_id, ep_index)
 
-    cmd = [
-        "ffmpeg",
-        "-loglevel", "error",
-        "-y",
-        "-i", m3u8,
-        "-c", "copy",
-        "-bsf:a", "aac_adtstoasc",
-        filename
-    ]
+    if not video_url:
+        print(f"Episode {ep_index} gagal ambil stream")
+        return
 
-    subprocess.run(cmd)
+    r = requests.get(video_url, stream=True)
+
+    with open(filename, "wb") as f:
+
+        for chunk in r.iter_content(1024 * 256):
+            f.write(chunk)
 
 
-############################################################
+###########################################################
 # DOWNLOAD ENGINE
-############################################################
+###########################################################
 
-def download_all(episodes, drama_folder, provider, book_id=None):
+def download_all(episodes, drama_folder, provider, drama_id):
 
     print("\nDownloading episodes...\n")
 
@@ -172,14 +181,14 @@ def download_all(episodes, drama_folder, provider, book_id=None):
         with ThreadPoolExecutor(max_workers=THREADS) as exe:
 
             list(tqdm(
-                exe.map(lambda ep: download_reelshort(ep, book_id, drama_folder), episodes),
+                exe.map(lambda ep: download_dramabox(ep, drama_id, drama_folder), episodes),
                 total=len(episodes)
             ))
 
 
-############################################################
+###########################################################
 # MERGE
-############################################################
+###########################################################
 
 def merge_videos(drama_folder, title):
 
@@ -216,9 +225,9 @@ def merge_videos(drama_folder, title):
     print("Merge selesai")
 
 
-############################################################
+###########################################################
 # CLEANUP
-############################################################
+###########################################################
 
 def cleanup(drama_folder):
 
@@ -231,15 +240,15 @@ def cleanup(drama_folder):
             os.remove(os.path.join(drama_folder, f))
 
 
-############################################################
+###########################################################
 # MAIN
-############################################################
+###########################################################
 
 def main():
 
     print("\nSelect Source:")
     print("1. Melolo")
-    print("2. ReelShort")
+    print("2. DramaBox")
 
     source = input("\nChoice: ")
 
@@ -252,21 +261,20 @@ def main():
 
     else:
 
-        provider = "reelshort"
-        dramas = search_reelshort(query)
+        provider = "dramabox"
+        dramas = search_dramabox(query)
 
     print("\nResults:\n")
 
     for i, d in enumerate(dramas):
 
-        print(f"{i+1}. {d['title']} ({d['episodes']} ep)")
+        print(f"{i+1}. {d['title']}")
 
     choice = int(input("\nSelect drama: ")) - 1
 
     drama = dramas[choice]
 
     title = clean_title(drama["title"])
-
     drama_id = drama["id"]
 
     drama_folder = os.path.join(OUTPUT_DIR, title)
@@ -276,12 +284,9 @@ def main():
     print("\nFetching episode list...\n")
 
     if provider == "melolo":
-
         episodes = melolo_episode_list(drama_id)
-
     else:
-
-        episodes = reelshort_episode_list(drama_id)
+        episodes = dramabox_episode_list(drama_id)
 
     print(f"Total episode: {len(episodes)}")
 

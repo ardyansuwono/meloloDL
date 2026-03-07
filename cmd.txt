@@ -6,8 +6,10 @@ sudo apt install ffmpeg -y
 
 pip install requests tqdm
 
+pip install telethon pymediainfo tqdm
+
 rm -rf output/*
 
-rclone move "output/Si Genius Juru Taksir/Si Genius Juru Taksir.mp4" gdrive:/WidevineDownloads/ -P
+rclone move "output/Lahir Kembali Untuk Sukses/Lahir Kembali Untuk Sukses.mp4" gdrive:/WidevineDownloads/ -P
 
 rclone move output gdrive:/WidevineDownloads/ -P
