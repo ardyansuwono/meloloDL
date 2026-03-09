@@ -17,23 +17,31 @@ api_hash = "9e268fee501ad809e4f5f598adcb970c"
 client = TelegramClient("mysession", api_id, api_hash)
 
 # ======================
-# GET VIDEO FILES
+# FILE EXTENSIONS
 # ======================
 
-def get_video_files(folder):
+VIDEO_EXTENSIONS = (".mp4", ".mkv", ".avi", ".mov")
+IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
 
-    videos = []
+# ======================
+# GET MEDIA FILES
+# ======================
+
+def get_media_files(folder):
+
+    media = []
 
     for root, dirs, files in os.walk(folder):
 
         for file in files:
 
-            if file.lower().endswith((".mp4", ".mkv", ".avi", ".mov")):
-                videos.append(os.path.join(root, file))
+            if file.lower().endswith(VIDEO_EXTENSIONS + IMAGE_EXTENSIONS):
 
-    videos.sort()
+                media.append(os.path.join(root, file))
 
-    return videos
+    media.sort()
+
+    return media
 
 # ======================
 # GENERATE CAPTION
@@ -101,10 +109,6 @@ async def upload_file(target, file_path, index, total):
 
     caption = generate_caption(file_path)
 
-    duration, width, height = get_video_metadata(file_path)
-
-    thumb = generate_thumbnail(file_path)
-
     file_size = os.path.getsize(file_path)
 
     print(f"\nUploading ({index}/{total})")
@@ -129,24 +133,47 @@ async def upload_file(target, file_path, index, total):
 
             try:
 
-                await client.send_file(
-                    target,
-                    file_path,
-                    caption=caption,
-                    thumb=thumb,
-                    supports_streaming=True,
-                    attributes=[
-                        DocumentAttributeVideo(
-                            duration=duration,
-                            w=width,
-                            h=height,
-                            supports_streaming=True
-                        )
-                    ],
-                    workers=24,
-                    part_size_kb=1024,
-                    progress_callback=progress
-                )
+                # =====================
+                # VIDEO
+                # =====================
+
+                if file_path.lower().endswith(VIDEO_EXTENSIONS):
+
+                    duration, width, height = get_video_metadata(file_path)
+
+                    thumb = generate_thumbnail(file_path)
+
+                    await client.send_file(
+                        target,
+                        file_path,
+                        caption=caption,
+                        thumb=thumb,
+                        supports_streaming=True,
+                        attributes=[
+                            DocumentAttributeVideo(
+                                duration=duration,
+                                w=width,
+                                h=height,
+                                supports_streaming=True
+                            )
+                        ],
+                        workers=8,
+                        progress_callback=progress
+                    )
+
+                # =====================
+                # IMAGE
+                # =====================
+
+                else:
+
+                    await client.send_file(
+                        target,
+                        file_path,
+                        caption=caption,
+                        workers=4,
+                        progress_callback=progress
+                    )
 
                 print("✅ Upload selesai")
 
@@ -182,7 +209,7 @@ async def upload_file(target, file_path, index, total):
 
 async def main():
 
-    print("\n=== TELEGRAM VIDEO UPLOADER ===\n")
+    print("\n=== TELEGRAM MEDIA UPLOADER ===\n")
 
     print("1. Cowok")
     print("2. Cewek")
@@ -219,7 +246,7 @@ async def main():
 
     print("✅ Target ditemukan")
 
-    folder = input("\nMasukkan path folder video: ")
+    folder = input("\nMasukkan path folder media: ")
 
     if not os.path.isdir(folder):
 
@@ -227,21 +254,21 @@ async def main():
 
         return
 
-    videos = get_video_files(folder)
+    media_files = get_media_files(folder)
 
-    if not videos:
+    if not media_files:
 
-        print("❌ Tidak ada video ditemukan")
+        print("❌ Tidak ada media ditemukan")
 
         return
 
-    total = len(videos)
+    total = len(media_files)
 
-    print(f"\nTotal video ditemukan: {total}")
+    print(f"\nTotal media ditemukan: {total}")
 
-    for i, video in enumerate(videos, start=1):
+    for i, media in enumerate(media_files, start=1):
 
-        await upload_file(target, video, i, total)
+        await upload_file(target, media, i, total)
 
     print("\n🎉 Semua upload selesai")
 
