@@ -1,187 +1,127 @@
 import requests
 import os
-import re
-import subprocess
-from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 
-BASE = "https://api.sonzaix.indevs.in"
+API_URL = "https://tikwm.com/api/"
 
-OUTPUT_DIR = "output"
+# lokasi folder script
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-THREADS = 12
-
-
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-
-def clean_title(title):
-    return re.sub(r'[\\/*?:"<>|]', "", title)
+# folder downloads
+BASE_DOWNLOAD_FOLDER = os.path.join(BASE_DIR, "downloads")
 
 
-# SEARCH DRAMA
-def search_drama(query):
-
-    url = f"{BASE}/melolo/search?q={query}&result=10&page=1"
-
-    res = requests.get(url).json()
-
-    dramas = []
-
-    for item in res["data"]:
-        for book in item["books"]:
-            dramas.append({
-                "title": book["drama_name"],
-                "id": book["drama_id"],
-                "episodes": book["episode_count"]
-            })
-
-    return dramas
+def create_folder(path):
+    os.makedirs(path, exist_ok=True)
 
 
-# GET EPISODES
-def get_episode_list(drama_id):
+def get_tiktok_data(url):
+    params = {"url": url}
 
-    url = f"{BASE}/melolo/detail/{drama_id}"
+    try:
+        response = requests.get(API_URL, params=params)
 
-    res = requests.get(url).json()
+        if response.status_code != 200:
+            print("❌ Gagal menghubungi API")
+            return None
 
-    return res["data"]["video_list"]
+        data = response.json()
+
+        if not data.get("data"):
+            print("❌ Video tidak ditemukan")
+            return None
+
+        return data["data"]
+
+    except Exception as e:
+        print("❌ Error:", e)
+        return None
 
 
-# GET STREAM URL
-def get_video_url(video_id):
+def download_file(url, filepath):
 
-    url = f"{BASE}/melolo/stream/{video_id}"
+    response = requests.get(url, stream=True)
 
-    res = requests.get(url).json()
+    total_size = int(response.headers.get("content-length", 0))
 
-    qualities = res["data"]["qualities"]
+    with open(filepath, "wb") as file, tqdm(
+        desc=os.path.basename(filepath),
+        total=total_size,
+        unit="B",
+        unit_scale=True,
+        unit_divisor=1024,
+    ) as bar:
 
-    return qualities[-1]["url"]
+        for chunk in response.iter_content(chunk_size=1024):
+
+            if chunk:
+                file.write(chunk)
+                bar.update(len(chunk))
 
 
-# DOWNLOAD VIDEO
-def download_video(ep, drama_folder):
+def download_video(data):
 
-    ep_num = ep["episode"]
+    video_folder = os.path.join(BASE_DOWNLOAD_FOLDER, "videos")
 
-    video_id = ep["video_id"]
+    create_folder(video_folder)
 
-    filename = os.path.join(drama_folder, f"ep{ep_num:03}.mp4")
+    video_url = data["play"]
 
-    if os.path.exists(filename):
+    filename = f"{data['id']}_video.mp4"
+
+    filepath = os.path.join(video_folder, filename)
+
+    print("⬇️ Downloading video tanpa watermark...")
+
+    download_file(video_url, filepath)
+
+    print("✅ Video tersimpan di:", filepath)
+
+
+def download_images(data):
+
+    images = data.get("images")
+
+    if not images:
+        print("❌ Tidak ada gambar ditemukan")
         return
 
-    url = get_video_url(video_id)
+    images_folder = os.path.join(BASE_DOWNLOAD_FOLDER, "images")
 
-    r = requests.get(url, stream=True)
+    post_folder = os.path.join(images_folder, data["id"])
 
-    with open(filename, "wb") as f:
+    create_folder(post_folder)
 
-        for chunk in r.iter_content(1024 * 256):
-            f.write(chunk)
+    print(f"⬇️ Downloading {len(images)} gambar...")
 
+    for i, img_url in enumerate(images):
 
-# MULTI DOWNLOAD
-def download_all(episodes, drama_folder):
+        filename = f"image_{i+1}.jpg"
 
-    print("\nDownloading episodes...\n")
+        filepath = os.path.join(post_folder, filename)
 
-    with ThreadPoolExecutor(max_workers=THREADS) as exe:
+        download_file(img_url, filepath)
 
-        list(tqdm(
-            exe.map(lambda ep: download_video(ep, drama_folder), episodes),
-            total=len(episodes)
-        ))
-
-
-# MERGE VIDEO
-def merge_videos(drama_folder, title):
-
-    print("\nMerging video...\n")
-
-    files = sorted([f for f in os.listdir(drama_folder) if f.startswith("ep")])
-
-    list_file = os.path.join(drama_folder, "list.txt")
-
-    with open(list_file, "w") as f:
-
-        for file in files:
-            f.write(f"file '{file}'\n")
-
-    output_name = f"{title}.mp4"
-
-    cmd = [
-        "ffmpeg",
-        "-loglevel", "error",
-        "-fflags", "+genpts",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", "list.txt",
-        "-c", "copy",
-        "-reset_timestamps", "1",
-        "-avoid_negative_ts", "make_zero",
-        output_name
-    ]
-
-    subprocess.run(cmd, cwd=drama_folder)
-
-    os.remove(list_file)
-
-    print("Merge selesai")
-
-
-# DELETE EPISODES
-def cleanup(drama_folder):
-
-    print("Cleaning temporary files...\n")
-
-    for f in os.listdir(drama_folder):
-
-        if f.startswith("ep") and f.endswith(".mp4"):
-
-            os.remove(os.path.join(drama_folder, f))
+    print("✅ Semua gambar tersimpan di:", post_folder)
 
 
 def main():
 
-    query = input("Cari drama: ")
+    print("=== TikTok Downloader (Video + Photo Mode) ===")
 
-    dramas = search_drama(query)
+    create_folder(BASE_DOWNLOAD_FOLDER)
 
-    print("\n=== HASIL ===\n")
+    url = input("Masukkan URL TikTok: ")
 
-    for i, d in enumerate(dramas):
-        print(f"{i+1}. {d['title']} ({d['episodes']} episode)")
+    data = get_tiktok_data(url)
 
-    choice = int(input("\nPilih: ")) - 1
+    if not data:
+        return
 
-    drama = dramas[choice]
-
-    title = clean_title(drama["title"])
-
-    drama_id = drama["id"]
-
-    drama_folder = os.path.join(OUTPUT_DIR, title)
-
-    os.makedirs(drama_folder, exist_ok=True)
-
-    print("\nMengambil episode list...\n")
-
-    episodes = get_episode_list(drama_id)
-
-    print(f"Total episode: {len(episodes)}")
-
-    download_all(episodes, drama_folder)
-
-    merge_videos(drama_folder, title)
-
-    cleanup(drama_folder)
-
-    print("\nSelesai!")
-
-    print(f"\nVideo final:\n{drama_folder}/{title}.mp4")
+    if data.get("images"):
+        download_images(data)
+    else:
+        download_video(data)
 
 
 if __name__ == "__main__":
