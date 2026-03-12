@@ -11,8 +11,11 @@ pip install telethon pymediainfo tqdm
 rm -rf downloads/*
 rm -rf images/*
 
+Reyhnsptr1
 rclone move "output/Lahir Kembali Untuk Sukses/Lahir Kembali Untuk Sukses.mp4" gdrive:/WidevineDownloads/ -P
 
 rclone move output gdrive:/WidevineDownloads/ -P
 
 aria2c "https://rapidgator.net/file/d8c77e6a2106375a656831a3367ae55b/ArMatUunSjdh202180pNFWBLAAC20H26QM.rar"
+
+https://t.me/+EY7AlTrIseQ4YzM9

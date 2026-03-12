@@ -1,12 +1,13 @@
 import os
-import re
 import requests
+import subprocess
 from tqdm import tqdm
 
-API = "https://tikwm.com/api/"
+API_DOMAIN = "api.vxtwitter.com"
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0"
+    "User-Agent": "Mozilla/5.0",
+    "Referer": "https://x.com/"
 }
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -32,6 +33,7 @@ def download_file(url, path):
     ) as bar:
 
         for chunk in r.iter_content(1024):
+
             if chunk:
                 f.write(chunk)
                 bar.update(len(chunk))
@@ -39,50 +41,76 @@ def download_file(url, path):
 
 def get_data(url):
 
-    r = requests.get(API, params={"url": url}, headers=HEADERS)
+    api = url.replace("x.com", API_DOMAIN)
+
+    r = requests.get(api, headers=HEADERS)
 
     try:
-        return r.json()["data"]
+        return r.json()
     except:
         return None
 
 
-def handle_download(data):
+def handle_download(data, tweet_url):
 
-    if data.get("images"):
+    tweet_id = tweet_url.split("/")[-1]
 
-        folder = os.path.join(IMAGE_DIR, data["id"])
-        os.makedirs(folder, exist_ok=True)
+    if "media_extended" not in data:
+        print("❌ Tidak ada media")
+        return
 
-        print("📸 Photo post")
+    img_count = 1
 
-        for i, img in enumerate(data["images"]):
+    for media in data["media_extended"]:
 
-            path = os.path.join(folder, f"image_{i+1}.jpg")
+        # =====================
+        # IMAGE
+        # =====================
+        if media["type"] == "image":
+
+            img = media["url"] + "?name=orig"
+
+            filename = f"{tweet_id}_{img_count}.jpg"
+
+            path = os.path.join(IMAGE_DIR, filename)
+
+            print("📸 Download:", filename)
 
             download_file(img, path)
 
-    else:
+            img_count += 1
 
-        video = data["play"]
+        # =====================
+        # VIDEO
+        # =====================
+        elif media["type"] == "video":
 
-        filename = f"{data['id']}.mp4"
+            m3u8 = media["url"]
 
-        path = os.path.join(VIDEO_DIR, filename)
+            filename = f"{tweet_id}.mp4"
 
-        print("⬇ Download:", filename)
+            path = os.path.join(VIDEO_DIR, filename)
 
-        download_file(video, path)
+            print("🎬 Download video:", filename)
+
+            subprocess.run([
+                "ffmpeg",
+                "-loglevel", "error",
+                "-y",
+                "-i", m3u8,
+                "-c", "copy",
+                path
+            ])
 
 
 def download_single():
 
-    url = input("URL TikTok: ")
+    url = input("URL X/Twitter: ")
 
     data = get_data(url)
 
     if data:
-        handle_download(data)
+        handle_download(data, url)
 
 
 def download_multi():
@@ -99,7 +127,7 @@ def download_multi():
         data = get_data(url)
 
         if data:
-            handle_download(data)
+            handle_download(data, url)
 
 
 def download_bulk():
@@ -117,38 +145,7 @@ def download_bulk():
             data = get_data(link)
 
             if data:
-                handle_download(data)
-
-
-# grab video dari halaman profil
-def grab_profile():
-
-    username = input("Username TikTok: ").replace("@", "")
-
-    url = f"https://www.tiktok.com/@{username}"
-
-    r = requests.get(url, headers=HEADERS)
-
-    ids = re.findall(r'video/(\d+)', r.text)
-
-    ids = list(set(ids))
-
-    if not ids:
-
-        print("❌ tidak menemukan video")
-
-        return
-
-    print("Found", len(ids), "videos")
-
-    for vid in ids:
-
-        link = f"https://www.tiktok.com/@{username}/video/{vid}"
-
-        data = get_data(link)
-
-        if data:
-            handle_download(data)
+                handle_download(data, link)
 
 
 def menu():
@@ -157,14 +154,13 @@ def menu():
 
         print("""
 ==============================
- TIKTOK DOWNLOADER TOOL
+  X / TWITTER DOWNLOADER
 ==============================
 
 1. Download Single URL
 2. Download Multi URL
-3. Grab Akun TikTok
-4. Bulk Download (TXT)
-5. Exit
+3. Bulk Download (TXT)
+4. Exit
 """)
 
         pilih = input("Pilih menu: ")
@@ -176,12 +172,9 @@ def menu():
             download_multi()
 
         elif pilih == "3":
-            grab_profile()
-
-        elif pilih == "4":
             download_bulk()
 
-        elif pilih == "5":
+        elif pilih == "4":
             break
 
 
