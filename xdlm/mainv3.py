@@ -50,12 +50,33 @@ def smart_delay():
 
     base = random.uniform(2, 5)
 
-    # jika banyak error -> tambah delay
     delay = base + (fail_count * 2)
 
     print(f"⏳ Delay {delay:.2f} detik")
 
     time.sleep(delay)
+
+
+# =========================
+# UNIQUE FILE NAME
+# =========================
+
+def get_unique_filename(directory, filename):
+
+    base, ext = os.path.splitext(filename)
+
+    counter = 1
+    new_name = filename
+    path = os.path.join(directory, new_name)
+
+    while os.path.exists(path):
+
+        new_name = f"{base}_{counter}{ext}"
+        path = os.path.join(directory, new_name)
+
+        counter += 1
+
+    return path
 
 
 # =========================
@@ -77,6 +98,9 @@ def download_file(url, path):
                 timeout=30
             )
 
+            if r.status_code != 200:
+                raise Exception("Download gagal")
+
             size = int(r.headers.get("content-length", 0))
 
             with open(path, "wb") as f, tqdm(
@@ -95,7 +119,7 @@ def download_file(url, path):
             fail_count = 0
             return
 
-        except Exception as e:
+        except Exception:
 
             print("⚠️ Retry download...", attempt + 1)
 
@@ -157,24 +181,27 @@ def handle_download(data, tweet_url):
 
     tweet_id = tweet_url.split("/")[-1]
 
-    if "media_extended" not in data:
+    media_list = data.get("media_extended", [])
+
+    if not media_list:
         print("❌ Tidak ada media")
         return
 
     img_count = 1
 
-    for media in data["media_extended"]:
+    for media in media_list:
 
-        # IMAGE
-        if media["type"] == "image":
+        media_type = media.get("type")
+
+        if media_type == "image":
 
             img = media["url"] + "?name=orig"
 
             filename = f"{tweet_id}_{img_count}.jpg"
 
-            path = os.path.join(IMAGE_DIR, filename)
+            path = get_unique_filename(IMAGE_DIR, filename)
 
-            print("📸 Download:", filename)
+            print("📸 Download:", os.path.basename(path))
 
             download_file(img, path)
 
@@ -182,16 +209,15 @@ def handle_download(data, tweet_url):
 
             smart_delay()
 
-        # VIDEO
-        elif media["type"] == "video":
+        elif media_type == "video":
 
             m3u8 = media["url"]
 
             filename = f"{tweet_id}.mp4"
 
-            path = os.path.join(VIDEO_DIR, filename)
+            path = get_unique_filename(VIDEO_DIR, filename)
 
-            print("🎬 Download video:", filename)
+            print("🎬 Download video:", os.path.basename(path))
 
             subprocess.run([
                 "ffmpeg",

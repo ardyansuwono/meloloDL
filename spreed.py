@@ -1,7 +1,7 @@
 import requests
 import pandas as pd
 
-url = "https://api.short.io/api/links?domain_id=1131756&limit=150"
+url = "https://api.short.io/api/links?domain_id=1077772&limit=150"
 
 headers = {
     "accept": "application/json",

@@ -8,9 +8,9 @@ pip install requests tqdm
 
 pip install telethon pymediainfo tqdm
 
-rm -rf downloads/*
+rm -rf xdlm/downloads/*
 rm -rf images/*
-
+rm -rf xdlm/downloads/videos
 Reyhnsptr1
 rclone move "output/Lahir Kembali Untuk Sukses/Lahir Kembali Untuk Sukses.mp4" gdrive:/WidevineDownloads/ -P
 
