@@ -17,7 +17,6 @@ USER_MEDIA_HASH = "U1Zgdsu2qjBi8JF74lTmJQ"
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DOWNLOAD_DIR = os.path.join(BASE, "downloads")
-
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 # ================================
@@ -36,7 +35,6 @@ def load_cookies(path="cookies.txt"):
                 continue
 
             parts = line.strip().split("\t")
-
             if len(parts) >= 7:
                 cookies[parts[5]] = parts[6]
 
@@ -59,11 +57,10 @@ HEADERS = {
     "x-twitter-auth-type": "OAuth2Session",
     "User-Agent": "Mozilla/5.0"
 }
-
 session.headers.update(HEADERS)
 
 # ================================
-# COMMON GRAPHQL PARAMS
+# GRAPHQL PARAMS
 # ================================
 
 FEATURES = {
@@ -121,19 +118,35 @@ def safe_get_json(resp):
         return None
 
 
+def normalize_username(username):
+    return (
+        username.replace("https://x.com/", "")
+        .replace("http://x.com/", "")
+        .replace("@", "")
+        .strip("/")
+        .strip()
+    )
+
+
 def pick_best_video_variant(variants):
-    mp4_variants = [v for v in variants if v.get("content_type") == "video/mp4"]
+    mp4_variants = [
+        v for v in variants
+        if v.get("content_type") == "video/mp4" and v.get("url")
+    ]
     if not mp4_variants:
         return None
     return max(mp4_variants, key=lambda x: x.get("bitrate", 0))
 
 
-def normalize_username(username):
-    return username.replace("https://x.com/", "").replace("http://x.com/", "").replace("@", "").strip("/").strip()
-
+def has_media_in_tweet_result(tweet_result):
+    legacy = tweet_result.get("legacy", {})
+    return (
+        "extended_entities" in legacy or
+        ("entities" in legacy and "media" in legacy["entities"])
+    )
 
 # ================================
-# DOWNLOAD FILE
+# DOWNLOAD
 # ================================
 
 def download_file(url, path):
@@ -153,7 +166,6 @@ def download_file(url, path):
                 f.write(chunk)
                 bar.update(len(chunk))
 
-
 # ================================
 # VXTWITTER FALLBACK
 # ================================
@@ -172,15 +184,20 @@ def download_media_vx(data, username):
     folder = os.path.join(DOWNLOAD_DIR, username)
     os.makedirs(folder, exist_ok=True)
 
-    if "media_extended" not in data:
+    media_extended = data.get("media_extended", [])
+    if not media_extended:
         return False
 
     count = 1
     downloaded_any = False
 
-    for m in data["media_extended"]:
+    for m in media_extended:
         if m.get("type") == "image":
-            url = m["url"] + "?name=orig"
+            url = m.get("url")
+            if not url:
+                continue
+
+            url = url + "?name=orig"
             filename = f"{tweet_id}_{count}.jpg"
             path = os.path.join(folder, filename)
 
@@ -215,9 +232,8 @@ def download_media_vx(data, username):
 
     return downloaded_any
 
-
 # ================================
-# DIRECT TWEET MEDIA PARSER
+# PARSE MEDIA
 # ================================
 
 def parse_media_from_tweet_result(tweet_result):
@@ -249,9 +265,12 @@ def parse_media_from_tweet_result(tweet_result):
                     "url": best["url"]
                 })
             else:
-                # fallback m3u8
                 m3u8 = next(
-                    (v.get("url") for v in variants if v.get("content_type") == "application/x-mpegURL"),
+                    (
+                        v.get("url")
+                        for v in variants
+                        if v.get("content_type") == "application/x-mpegURL"
+                    ),
                     None
                 )
                 if m3u8:
@@ -319,9 +338,8 @@ def download_parsed_media(tweet_id, media_list, username):
 
     return downloaded_any
 
-
 # ================================
-# GET USER ID
+# GRAPHQL
 # ================================
 
 def get_user_id(username):
@@ -338,125 +356,155 @@ def get_user_id(username):
 
     r = session.get(url, params=params, timeout=30)
     r.raise_for_status()
-
     data = r.json()
     return data["data"]["user"]["result"]["rest_id"]
 
-
 # ================================
-# TIMELINE PARSER
+# TIMELINE WALKER
 # ================================
 
-def extract_tweet_ids_from_timeline(data, seen):
-    tweets = []
-    cursor = None
-
+def iter_instruction_entries(data):
     result = data.get("data", {}).get("user", {}).get("result", {})
     timeline = result.get("timeline_v2") or result.get("timeline")
 
     if not timeline:
-        return tweets, cursor
+        return []
+
+    instructions = timeline.get("timeline", {}).get("instructions", [])
+    all_entries = []
+
+    for ins in instructions:
+        # bentuk biasa
+        if "entries" in ins:
+            for entry in ins.get("entries", []):
+                all_entries.append(entry)
+
+        # bentuk tunggal
+        if "entry" in ins and isinstance(ins.get("entry"), dict):
+            all_entries.append(ins["entry"])
+
+        # bentuk media grid lanjutan
+        if "moduleItems" in ins:
+            for module_item in ins.get("moduleItems", []):
+                all_entries.append(module_item)
+
+    return all_entries
+
+
+def extract_tweet_result_candidates_from_entry(entry):
+    candidates = []
+
+    # bentuk moduleItems item
+    tweet_result = (
+        entry.get("item", {})
+        .get("itemContent", {})
+        .get("tweet_results", {})
+        .get("result", {})
+    )
+    if tweet_result:
+        candidates.append(tweet_result)
+
+    # bentuk entry biasa
+    content = entry.get("content", {})
+
+    tweet_result = (
+        content.get("itemContent", {})
+        .get("tweet_results", {})
+        .get("result", {})
+    )
+    if tweet_result:
+        candidates.append(tweet_result)
+
+    # bentuk TimelineTimelineModule
+    if content.get("__typename") == "TimelineTimelineModule":
+        for item in content.get("items", []):
+            tweet_result = (
+                item.get("item", {})
+                .get("itemContent", {})
+                .get("tweet_results", {})
+                .get("result", {})
+            )
+            if tweet_result:
+                candidates.append(tweet_result)
+
+    return candidates
+
+
+def extract_cursor_from_entry(entry):
+    entry_id = entry.get("entryId", "")
+    content = entry.get("content", {})
+
+    if entry_id.startswith("cursor-bottom"):
+        return content.get("value")
+
+    if content.get("__typename") == "TimelineTimelineCursor":
+        if content.get("cursorType") == "Bottom":
+            return content.get("value")
+
+    return None
+
+
+def extract_bottom_cursor_from_instructions(data):
+    result = data.get("data", {}).get("user", {}).get("result", {})
+    timeline = result.get("timeline_v2") or result.get("timeline")
+
+    if not timeline:
+        return None
 
     instructions = timeline.get("timeline", {}).get("instructions", [])
 
     for ins in instructions:
-        entries = ins.get("entries", [])
+        if "entries" in ins:
+            for entry in ins.get("entries", []):
+                cursor = extract_cursor_from_entry(entry)
+                if cursor:
+                    return cursor
 
-        for entry in entries:
-            entry_id = entry.get("entryId", "")
-            content = entry.get("content", {})
+    return None
 
-            # Case 1: tweet langsung
-            if entry_id.startswith("tweet-"):
-                tid = entry_id.split("tweet-")[-1]
-                if tid and tid not in seen:
-                    tweets.append(tid)
-                    seen.add(tid)
 
-            # Case 2: media grid/module
-            if content.get("__typename") == "TimelineTimelineModule":
-                for item in content.get("items", []):
-                    tweet_result = (
-                        item.get("item", {})
-                        .get("itemContent", {})
-                        .get("tweet_results", {})
-                        .get("result", {})
-                    )
+def extract_tweet_ids_from_timeline(data, seen):
+    tweets = []
 
-                    tid = tweet_result.get("rest_id")
-                    legacy = tweet_result.get("legacy", {})
+    entries = iter_instruction_entries(data)
+    cursor = extract_bottom_cursor_from_instructions(data)
 
-                    has_media = (
-                        "extended_entities" in legacy or
-                        ("entities" in legacy and "media" in legacy["entities"])
-                    )
+    for entry in entries:
+        for tweet_result in extract_tweet_result_candidates_from_entry(entry):
+            tid = tweet_result.get("rest_id")
+            if tid and has_media_in_tweet_result(tweet_result) and tid not in seen:
+                tweets.append(tid)
+                seen.add(tid)
 
-                    if tid and has_media and tid not in seen:
-                        tweets.append(tid)
-                        seen.add(tid)
+        entry_id = entry.get("entryId", "")
+        if "tweet-" in entry_id:
+            tid = entry_id.split("tweet-")[-1]
+            tid = tid.split("-")[0] if "-" in tid else tid
 
-            # cursor bottom
-            if entry_id.startswith("cursor-bottom"):
-                cursor = content.get("value")
+            if tid.isdigit() and tid not in seen:
+                tweets.append(tid)
+                seen.add(tid)
 
     return tweets, cursor
 
 
 def extract_media_map_from_timeline(data, media_map):
-    """
-    Simpan detail media langsung dari response timeline
-    media_map[tweet_id] = [ {type, url}, ... ]
-    """
-    result = data.get("data", {}).get("user", {}).get("result", {})
-    timeline = result.get("timeline_v2") or result.get("timeline")
+    entries = iter_instruction_entries(data)
 
-    if not timeline:
-        return media_map
+    for entry in entries:
+        for tweet_result in extract_tweet_result_candidates_from_entry(entry):
+            tid = tweet_result.get("rest_id")
+            if not tid:
+                continue
 
-    instructions = timeline.get("timeline", {}).get("instructions", [])
-
-    for ins in instructions:
-        entries = ins.get("entries", [])
-
-        for entry in entries:
-            content = entry.get("content", {})
-            entry_id = entry.get("entryId", "")
-
-            # tweet langsung
-            if entry_id.startswith("tweet-"):
-                tweet_result = (
-                    content.get("itemContent", {})
-                    .get("tweet_results", {})
-                    .get("result", {})
-                )
-
-                tid = tweet_result.get("rest_id")
-                if tid:
-                    parsed = parse_media_from_tweet_result(tweet_result)
-                    if parsed:
-                        media_map[tid] = parsed
-
-            # grid/module
-            if content.get("__typename") == "TimelineTimelineModule":
-                for item in content.get("items", []):
-                    tweet_result = (
-                        item.get("item", {})
-                        .get("itemContent", {})
-                        .get("tweet_results", {})
-                        .get("result", {})
-                    )
-
-                    tid = tweet_result.get("rest_id")
-                    if tid:
-                        parsed = parse_media_from_tweet_result(tweet_result)
-                        if parsed:
-                            media_map[tid] = parsed
+            parsed = parse_media_from_tweet_result(tweet_result)
+            if parsed:
+                media_map[tid] = parsed
 
     return media_map
 
-
 # ================================
-# GET TWEETS
+# GET ALL TWEETS
 # ================================
 
 def get_tweets(user_id):
@@ -465,8 +513,13 @@ def get_tweets(user_id):
 
     cursor = None
     last_cursor = None
+    same_cursor_count = 0
+    empty_page_count = 0
+    page = 0
 
     while True:
+        page += 1
+
         url = f"https://x.com/i/api/graphql/{USER_TWEETS_HASH}/UserTweets"
 
         variables = {
@@ -491,21 +544,40 @@ def get_tweets(user_id):
             print("Rate limit / response bukan JSON")
             break
 
-        new_ids, cursor = extract_tweet_ids_from_timeline(data, seen)
+        new_ids, new_cursor = extract_tweet_ids_from_timeline(data, seen)
         tweets.extend(new_ids)
 
-        print("Collected all tweets:", len(tweets))
+        print(f"Page {page} | +{len(new_ids)} | total={len(tweets)} | cursor={new_cursor}")
 
-        if not cursor or cursor == last_cursor or len(new_ids) == 0:
+        if not new_cursor:
+            print("Cursor habis")
             break
 
-        last_cursor = cursor
+        if new_cursor == last_cursor:
+            same_cursor_count += 1
+        else:
+            same_cursor_count = 0
+
+        if len(new_ids) == 0:
+            empty_page_count += 1
+        else:
+            empty_page_count = 0
+
+        if same_cursor_count >= 2:
+            print("Cursor tidak berubah terus, stop")
+            break
+
+        if empty_page_count >= 3:
+            print("3 halaman berturut-turut kosong, stop")
+            break
+
+        last_cursor = new_cursor
+        cursor = new_cursor
 
     return tweets
 
-
 # ================================
-# GET MEDIA TWEETS + MEDIA MAP
+# GET MEDIA TWEETS
 # ================================
 
 def get_media_tweets(user_id, return_media_map=False):
@@ -515,8 +587,13 @@ def get_media_tweets(user_id, return_media_map=False):
 
     cursor = None
     last_cursor = None
+    same_cursor_count = 0
+    empty_page_count = 0
+    page = 0
 
     while True:
+        page += 1
+
         url = f"https://x.com/i/api/graphql/{USER_MEDIA_HASH}/UserMedia"
 
         variables = {
@@ -545,26 +622,55 @@ def get_media_tweets(user_id, return_media_map=False):
             print("Rate limit / response bukan JSON")
             break
 
-        new_ids, cursor = extract_tweet_ids_from_timeline(data, seen)
+        new_ids, new_cursor = extract_tweet_ids_from_timeline(data, seen)
         tweets.extend(new_ids)
-
         extract_media_map_from_timeline(data, media_map)
 
-        print("Collected media tweets:", len(tweets))
+        print(f"Page {page} | +{len(new_ids)} | total={len(tweets)} | cursor={new_cursor}")
 
-        if not cursor or cursor == last_cursor or len(new_ids) == 0:
+        if len(new_ids) == 0:
+            print("DEBUG: halaman ini tidak menghasilkan ID baru")
+            try:
+                result = data.get("data", {}).get("user", {}).get("result", {})
+                timeline = result.get("timeline_v2") or result.get("timeline")
+                instructions = timeline.get("timeline", {}).get("instructions", [])
+                print("Jumlah instructions:", len(instructions))
+                print(json.dumps(data, indent=2)[:2500])
+            except Exception:
+                pass
+
+        if not new_cursor:
+            print("Cursor habis")
             break
 
-        last_cursor = cursor
+        if new_cursor == last_cursor:
+            same_cursor_count += 1
+        else:
+            same_cursor_count = 0
+
+        if len(new_ids) == 0:
+            empty_page_count += 1
+        else:
+            empty_page_count = 0
+
+        if same_cursor_count >= 2:
+            print("Cursor tidak berubah terus, stop")
+            break
+
+        if empty_page_count >= 3:
+            print("3 halaman berturut-turut kosong, stop")
+            break
+
+        last_cursor = new_cursor
+        cursor = new_cursor
 
     if return_media_map:
         return tweets, media_map
 
     return tweets
 
-
 # ================================
-# GRAB PROFILE -> TXT
+# ACTIONS
 # ================================
 
 def grab_profile():
@@ -579,19 +685,13 @@ def grab_profile():
         return
 
     filename = f"tweets_{username}.txt"
-
     with open(filename, "w", encoding="utf-8") as f:
         for tid in ids:
-            url = f"https://x.com/{username}/status/{tid}?s=20"
-            f.write(url + "\n")
+            f.write(f"https://x.com/{username}/status/{tid}?s=20\n")
 
     print("\nTotal tweet:", len(ids))
     print("Disimpan ke:", filename)
 
-
-# ================================
-# GRAB MEDIA ONLY -> TXT
-# ================================
 
 def grab_profile_media_only():
     username = input("Username X: ")
@@ -605,19 +705,13 @@ def grab_profile_media_only():
         return
 
     filename = f"media_tweets_{username}.txt"
-
     with open(filename, "w", encoding="utf-8") as f:
         for tid in ids:
-            url = f"https://x.com/{username}/status/{tid}?s=20"
-            f.write(url + "\n")
+            f.write(f"https://x.com/{username}/status/{tid}?s=20\n")
 
     print("\nTotal postingan media:", len(ids))
     print("Disimpan ke:", filename)
 
-
-# ================================
-# DIRECT BULK MEDIA DOWNLOAD FROM USERMEDIA
-# ================================
 
 def bulk_media_from_profile():
     username = input("Username X: ")
@@ -637,12 +731,12 @@ def bulk_media_from_profile():
 
     for tid in ids:
         media_list = media_map.get(tid, [])
+
         if media_list:
             ok = download_parsed_media(tid, media_list, username)
             if ok:
                 downloaded += 1
         else:
-            # fallback ke vxtwitter jika media_map kosong
             tweet_url = f"https://x.com/{username}/status/{tid}?s=20"
             data = get_media(tweet_url)
             if data and "media_extended" in data:
@@ -656,10 +750,6 @@ def bulk_media_from_profile():
     print(f"Berhasil download dari: {downloaded} tweet")
 
 
-# ================================
-# SINGLE DOWNLOAD
-# ================================
-
 def single():
     url = input("URL: ").strip()
 
@@ -669,19 +759,13 @@ def single():
         print("URL tidak valid")
         return
 
-    # fallback cepat: vxtwitter
     data = get_media(url)
-
     if data and "media_extended" in data:
         if download_media_vx(data, username):
             return
 
     print("Media tidak ditemukan / fallback gagal")
 
-
-# ================================
-# BULK DOWNLOAD TXT
-# ================================
 
 def bulk():
     file = input("Nama file txt: ").strip()
@@ -703,14 +787,12 @@ def bulk():
                 continue
 
             data = get_media(url)
-
             if data and "media_extended" in data:
                 download_media_vx(data, username)
             else:
                 print("Skip, media tidak ditemukan:", url)
 
             time.sleep(1)
-
 
 # ================================
 # MENU
@@ -735,22 +817,16 @@ def menu():
 
         if pilih == "1":
             single()
-
         elif pilih == "2":
             grab_profile()
-
         elif pilih == "3":
             bulk()
-
         elif pilih == "4":
             grab_profile_media_only()
-
         elif pilih == "5":
             bulk_media_from_profile()
-
         elif pilih == "6":
             break
-
         else:
             print("Menu tidak valid")
 
