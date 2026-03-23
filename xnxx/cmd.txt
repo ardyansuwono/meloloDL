@@ -1,0 +1,12 @@
+pip install requests beautifulsoup4 deep-translator
+
+pip install deepl
+
+pip install requests beautifulsoup4 tqdm openai
+
+
+export OPENAI_API_KEY="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"
+
+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
+
+export GEMINI_API_KEY="AIzaSyBXpQebQIfBUXKqbUV8fWl31OfKxXsLPQU"

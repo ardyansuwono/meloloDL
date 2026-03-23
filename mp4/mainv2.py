@@ -28,6 +28,11 @@ def download_file(url):
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
     filename = os.path.basename(urlparse(url).path)
+
+    # Jika tidak ada ekstensi mp4, tambahkan
+    if not filename.lower().endswith(".mp4"):
+        filename += ".mp4"
+
     filepath = os.path.join(DOWNLOAD_DIR, filename)
 
     print(f"\nDownloading: {filename}")
@@ -38,16 +43,17 @@ def download_file(url):
 
     with open(filepath, "wb") as f:
         for chunk in r.iter_content(8192):
-            f.write(chunk)
-            downloaded += len(chunk)
+            if chunk:
+                f.write(chunk)
+                downloaded += len(chunk)
 
-            if total > 0:
-                percent = downloaded * 100 / total
-                bar = int(30 * downloaded / total)
-                print(
-                    f"\r[{'█'*bar}{'-'*(30-bar)}] {percent:.1f}%",
-                    end=""
-                )
+                if total > 0:
+                    percent = downloaded * 100 / total
+                    bar = int(30 * downloaded / total)
+                    print(
+                        f"\r[{'█'*bar}{'-'*(30-bar)}] {percent:.1f}%",
+                        end=""
+                    )
 
     print("\nSelesai:", filepath)
 
