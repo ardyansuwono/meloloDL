@@ -8,7 +8,7 @@ pip install requests tqdm
 
 pip install telethon pymediainfo tqdm
 
-rm -rf mp4/downloads/*
+rm -rf xdlm/downloads/*
 rm -rf images/*
 rm -rf xdlm/downloads/videos
 Reyhnsptr1
